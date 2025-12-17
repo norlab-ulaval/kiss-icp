@@ -102,7 +102,7 @@ OdometryServer::OdometryServer(const rclcpp::NodeOptions &options)
 
     // Initialize subscribers
     pointcloud_sub_ = create_subscription<sensor_msgs::msg::PointCloud2>(
-        "pointcloud_topic", rclcpp::SensorDataQoS(),
+        "pointcloud_topic", 10,
         std::bind(&OdometryServer::RegisterFrame, this, std::placeholders::_1));
     done_sub_ = create_subscription<std_msgs::msg::Empty>(
         "kiss/done", rclcpp::QoS(10),
