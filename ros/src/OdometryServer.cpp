@@ -85,18 +85,15 @@ OdometryServer::OdometryServer(const rclcpp::NodeOptions &options)
     // Construct the main KISS-ICP odometry node
     kiss_icp_ = std::make_unique<kiss_icp::pipeline::KissICP>(config);
 
-    // Load map if in localization mode
-    if (localization_mode_) {
-        if (map_file_path_.empty()) {
-            RCLCPP_ERROR(this->get_logger(), "Localization mode enabled but no map file path provided!");
+    if (initial_map_file_name_.empty()) {
+        RCLCPP_ERROR(this->get_logger(), "Localization mode enabled but no map file path provided!");
+    } else {
+        auto map_points = LoadMapFromCSV(initial_map_file_name_);
+        if (!map_points.empty()) {
+            kiss_icp_->VoxelMap().AddPoints(map_points);
+            RCLCPP_INFO(this->get_logger(), "Loaded %zu points from map file", map_points.size());
         } else {
-            auto map_points = LoadMapFromCSV(map_file_path_);
-            if (!map_points.empty()) {
-                kiss_icp_->VoxelMap().AddPoints(map_points);
-                RCLCPP_INFO(this->get_logger(), "Loaded %zu points from map file", map_points.size());
-            } else {
-                RCLCPP_ERROR(this->get_logger(), "Failed to load map from: %s", map_file_path_.c_str());
-            }
+            RCLCPP_ERROR(this->get_logger(), "Failed to load map from: %s", initial_map_file_name_.c_str());
         }
     }
 
@@ -181,12 +178,12 @@ void OdometryServer::initializeParameters(kiss_icp::pipeline::KISSConfig &config
     }
 
     // Localization mode parameters
-    localization_mode_ = declare_parameter<bool>("localization_mode", localization_mode_);
-    RCLCPP_INFO(this->get_logger(), "\tLocalization mode: %d", localization_mode_);
-    if (localization_mode_) {
-        map_file_path_ = declare_parameter<std::string>("map_file_path", map_file_path_);
-        RCLCPP_INFO(this->get_logger(), "\tMap file path: %s", map_file_path_.c_str());
-    }
+    initial_map_file_name_ = declare_parameter<std::string>("initial_map_file_name", "");
+    RCLCPP_INFO(this->get_logger(), "\tInitial map file name: %s", initial_map_file_name_.c_str());
+
+    final_trajectory_file_name_ =
+        declare_parameter<std::string>("final_trajectory_file_name", "trajectory_kiss_icp.tum");
+    RCLCPP_INFO(this->get_logger(), "\tFinal trajectory file name: %s", final_trajectory_file_name_.c_str());
 }
 
 void OdometryServer::RegisterFrame(const sensor_msgs::msg::PointCloud2::ConstSharedPtr &msg) {
@@ -280,8 +277,8 @@ void OdometryServer::ResetService(
     trajectory_timestamps_.clear();
 
     // Reload map if in localization mode
-    if (localization_mode_ && !map_file_path_.empty()) {
-        auto map_points = LoadMapFromCSV(map_file_path_);
+    if ( !initial_map_file_name_.empty()) {
+        auto map_points = LoadMapFromCSV(initial_map_file_name_);
         if (!map_points.empty()) {
             kiss_icp_->VoxelMap().AddPoints(map_points);
             RCLCPP_INFO(this->get_logger(), "Reloaded %zu points from map file", map_points.size());
@@ -294,12 +291,10 @@ void OdometryServer::ResetService(
 void OdometryServer::DoneCallback([[maybe_unused]] const std_msgs::msg::Empty::ConstSharedPtr &msg) {
     RCLCPP_INFO(this->get_logger(), "Exporting trajectory to TUM format");
 
-    std::string path = "/home/nicolas-lauzon";
-    std::string tum_file = path + "/trajectory_kiss_icp.tum";
 
-    std::ofstream file(tum_file);
+    std::ofstream file(final_trajectory_file_name_);
     if (!file.is_open()) {
-        RCLCPP_ERROR(this->get_logger(), "Cannot open trajectory file: %s", tum_file.c_str());
+        RCLCPP_ERROR(this->get_logger(), "Cannot open trajectory file: %s", final_trajectory_file_name_.c_str());
         return;
     }
 
@@ -328,7 +323,7 @@ void OdometryServer::DoneCallback([[maybe_unused]] const std_msgs::msg::Empty::C
     }
 
     file.close();
-    RCLCPP_INFO(this->get_logger(), "Exported %zu poses to %s", trajectory_poses_.size(), tum_file.c_str());
+    RCLCPP_INFO(this->get_logger(), "Exported %zu poses to %s", trajectory_poses_.size(), final_trajectory_file_name_.c_str());
 }
 
 std::vector<Eigen::Vector3d> OdometryServer::LoadMapFromCSV(const std::string &file_path) {

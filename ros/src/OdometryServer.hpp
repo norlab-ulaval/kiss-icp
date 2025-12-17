@@ -97,9 +97,8 @@ private:
     double position_covariance_;
     double orientation_covariance_;
 
-    /// Localization mode
-    bool localization_mode_{true};
-    std::string map_file_path_{"/home/nicolas-lauzon/map_red.csv"};
+    std::string initial_map_file_name_;
+    std::string final_trajectory_file_name_;
 
     /// Trajectory storage for TUM export
     std::vector<Sophus::SE3d> trajectory_poses_;
