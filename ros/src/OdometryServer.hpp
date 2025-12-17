@@ -29,7 +29,6 @@
 #include <nav_msgs/msg/odometry.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
-#include <std_msgs/msg/empty.hpp>
 #include <std_msgs/msg/header.hpp>
 #include <std_srvs/srv/empty.hpp>
 #include <string>
@@ -62,7 +61,7 @@ private:
                        const std_msgs::msg::Header &header);
     void ResetService(const std::shared_ptr<std_srvs::srv::Empty::Request> request,
                       std::shared_ptr<std_srvs::srv::Empty::Response> response);
-    void DoneCallback(const std_msgs::msg::Empty::ConstSharedPtr &msg);
+    void ExportTrajectory();
 
 private:
     /// Tools for broadcasting TFs.
@@ -75,7 +74,6 @@ private:
 
     /// Data subscribers.
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr pointcloud_sub_;
-    rclcpp::Subscription<std_msgs::msg::Empty>::SharedPtr done_sub_;
 
     /// Data publishers.
     rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_publisher_;

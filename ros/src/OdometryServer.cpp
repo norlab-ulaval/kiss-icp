@@ -101,9 +101,18 @@ OdometryServer::OdometryServer(const rclcpp::NodeOptions &options)
     pointcloud_sub_ = create_subscription<sensor_msgs::msg::PointCloud2>(
         "pointcloud_topic", 10,
         std::bind(&OdometryServer::RegisterFrame, this, std::placeholders::_1));
-    done_sub_ = create_subscription<std_msgs::msg::Empty>(
-        "kiss/done", rclcpp::QoS(10),
-        std::bind(&OdometryServer::DoneCallback, this, std::placeholders::_1));
+
+    // Register shutdown callback to export trajectory on SIGTERM
+    auto context = rclcpp::contexts::get_global_default_context();
+    std::weak_ptr<OdometryServer> weak_this = std::static_pointer_cast<OdometryServer>(this->shared_from_this());
+    context->add_on_shutdown_callback(
+        [weak_this]() {
+            if (auto node = weak_this.lock()) {
+                RCLCPP_INFO(node->get_logger(), "Received shutdown signal, exporting trajectory...");
+                node->ExportTrajectory();
+                RCLCPP_INFO(node->get_logger(), "Trajectory export completed");
+            }
+        });
 
     // Initialize publishers
     rclcpp::QoS qos((rclcpp::SystemDefaultsQoS().keep_last(1).durability_volatile()));
@@ -288,7 +297,7 @@ void OdometryServer::ResetService(
     RCLCPP_INFO(this->get_logger(), "KISS-ICP reset completed successfully");
 }
 
-void OdometryServer::DoneCallback([[maybe_unused]] const std_msgs::msg::Empty::ConstSharedPtr &msg) {
+void OdometryServer::ExportTrajectory() {
     RCLCPP_INFO(this->get_logger(), "Exporting trajectory to TUM format");
 
 
