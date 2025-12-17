@@ -21,7 +21,10 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 #include <Eigen/Core>
+#include <fstream>
+#include <iomanip>
 #include <memory>
+#include <sstream>
 #include <sophus/se3.hpp>
 #include <utility>
 #include <vector>
@@ -82,10 +85,28 @@ OdometryServer::OdometryServer(const rclcpp::NodeOptions &options)
     // Construct the main KISS-ICP odometry node
     kiss_icp_ = std::make_unique<kiss_icp::pipeline::KissICP>(config);
 
+    // Load map if in localization mode
+    if (localization_mode_) {
+        if (map_file_path_.empty()) {
+            RCLCPP_ERROR(this->get_logger(), "Localization mode enabled but no map file path provided!");
+        } else {
+            auto map_points = LoadMapFromCSV(map_file_path_);
+            if (!map_points.empty()) {
+                kiss_icp_->VoxelMap().AddPoints(map_points);
+                RCLCPP_INFO(this->get_logger(), "Loaded %zu points from map file", map_points.size());
+            } else {
+                RCLCPP_ERROR(this->get_logger(), "Failed to load map from: %s", map_file_path_.c_str());
+            }
+        }
+    }
+
     // Initialize subscribers
     pointcloud_sub_ = create_subscription<sensor_msgs::msg::PointCloud2>(
         "pointcloud_topic", rclcpp::SensorDataQoS(),
         std::bind(&OdometryServer::RegisterFrame, this, std::placeholders::_1));
+    done_sub_ = create_subscription<std_msgs::msg::Empty>(
+        "kiss/done", rclcpp::QoS(10),
+        std::bind(&OdometryServer::DoneCallback, this, std::placeholders::_1));
 
     // Initialize publishers
     rclcpp::QoS qos((rclcpp::SystemDefaultsQoS().keep_last(1).durability_volatile()));
@@ -158,6 +179,14 @@ void OdometryServer::initializeParameters(kiss_icp::pipeline::KISSConfig &config
                     "[WARNING] max_range is smaller than min_range, setting min_range to 0.0");
         config.min_range = 0.0;
     }
+
+    // Localization mode parameters
+    localization_mode_ = declare_parameter<bool>("localization_mode", localization_mode_);
+    RCLCPP_INFO(this->get_logger(), "\tLocalization mode: %d", localization_mode_);
+    if (localization_mode_) {
+        map_file_path_ = declare_parameter<std::string>("map_file_path", map_file_path_);
+        RCLCPP_INFO(this->get_logger(), "\tMap file path: %s", map_file_path_.c_str());
+    }
 }
 
 void OdometryServer::RegisterFrame(const sensor_msgs::msg::PointCloud2::ConstSharedPtr &msg) {
@@ -170,6 +199,10 @@ void OdometryServer::RegisterFrame(const sensor_msgs::msg::PointCloud2::ConstSha
 
     // Extract the last KISS-ICP pose, ego-centric to the LiDAR
     const Sophus::SE3d kiss_pose = kiss_icp_->pose();
+
+    // Store pose and timestamp for trajectory export
+    trajectory_poses_.push_back(kiss_pose);
+    trajectory_timestamps_.push_back(rclcpp::Time(msg->header.stamp).seconds());
 
     // Spit the current estimated pose to ROS msgs handling the desired target frame
     PublishOdometry(kiss_pose, msg->header);
@@ -242,7 +275,93 @@ void OdometryServer::ResetService(
     // Reset the KISS-ICP pipeline
     kiss_icp_->Reset();
 
+    // Clear trajectory
+    trajectory_poses_.clear();
+    trajectory_timestamps_.clear();
+
+    // Reload map if in localization mode
+    if (localization_mode_ && !map_file_path_.empty()) {
+        auto map_points = LoadMapFromCSV(map_file_path_);
+        if (!map_points.empty()) {
+            kiss_icp_->VoxelMap().AddPoints(map_points);
+            RCLCPP_INFO(this->get_logger(), "Reloaded %zu points from map file", map_points.size());
+        }
+    }
+
     RCLCPP_INFO(this->get_logger(), "KISS-ICP reset completed successfully");
+}
+
+void OdometryServer::DoneCallback([[maybe_unused]] const std_msgs::msg::Empty::ConstSharedPtr &msg) {
+    RCLCPP_INFO(this->get_logger(), "Exporting trajectory to TUM format");
+
+    std::string path = "/home/nicolas-lauzon";
+    std::string tum_file = path + "/trajectory_kiss_icp.tum";
+
+    std::ofstream file(tum_file);
+    if (!file.is_open()) {
+        RCLCPP_ERROR(this->get_logger(), "Cannot open trajectory file: %s", tum_file.c_str());
+        return;
+    }
+
+    for (size_t i = 0; i < trajectory_poses_.size(); ++i) {
+        const auto &pose = trajectory_poses_[i];
+        const double timestamp = trajectory_timestamps_[i];
+
+        // Extract translation
+        const Eigen::Vector3d translation = pose.translation();
+        const double tx = translation.x();
+        const double ty = translation.y();
+        const double tz = translation.z();
+
+        // Extract rotation as quaternion (w, x, y, z)
+        const Eigen::Quaterniond quat = pose.unit_quaternion();
+        const double qw = quat.w();
+        const double qx = quat.x();
+        const double qy = quat.y();
+        const double qz = quat.z();
+
+        // Write in TUM format: timestamp tx ty tz qx qy qz qw
+        file << std::fixed << std::setprecision(4)
+             << timestamp << " "
+             << tx << " " << ty << " " << tz << " "
+             << qx << " " << qy << " " << qz << " " << qw << "\n";
+    }
+
+    file.close();
+    RCLCPP_INFO(this->get_logger(), "Exported %zu poses to %s", trajectory_poses_.size(), tum_file.c_str());
+}
+
+std::vector<Eigen::Vector3d> OdometryServer::LoadMapFromCSV(const std::string &file_path) {
+    std::vector<Eigen::Vector3d> points;
+    std::ifstream file(file_path);
+    
+    if (!file.is_open()) {
+        RCLCPP_ERROR(this->get_logger(), "Cannot open map file: %s", file_path.c_str());
+        return points;
+    }
+
+    std::string line;
+    while (std::getline(file, line)) {
+        std::stringstream ss(line);
+        std::string x_str, y_str, z_str;
+        
+        if (std::getline(ss, x_str, ',') && 
+            std::getline(ss, y_str, ',') && 
+            std::getline(ss, z_str, ',')) {
+            try {
+                double x = std::stod(x_str);
+                double y = std::stod(y_str);
+                double z = std::stod(z_str);
+                points.emplace_back(x, y, z);
+            } catch (const std::exception &e) {
+                // Skip invalid lines
+                continue;
+            }
+        }
+    }
+    
+    file.close();
+    return points;
 }
 }  // namespace kiss_icp_ros
 

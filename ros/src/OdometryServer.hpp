@@ -29,6 +29,7 @@
 #include <nav_msgs/msg/odometry.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
+#include <std_msgs/msg/empty.hpp>
 #include <std_msgs/msg/header.hpp>
 #include <std_srvs/srv/empty.hpp>
 #include <string>
@@ -61,6 +62,7 @@ private:
                        const std_msgs::msg::Header &header);
     void ResetService(const std::shared_ptr<std_srvs::srv::Empty::Request> request,
                       std::shared_ptr<std_srvs::srv::Empty::Response> response);
+    void DoneCallback(const std_msgs::msg::Empty::ConstSharedPtr &msg);
 
 private:
     /// Tools for broadcasting TFs.
@@ -73,6 +75,7 @@ private:
 
     /// Data subscribers.
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr pointcloud_sub_;
+    rclcpp::Subscription<std_msgs::msg::Empty>::SharedPtr done_sub_;
 
     /// Data publishers.
     rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_publisher_;
@@ -93,6 +96,17 @@ private:
     /// Covariance diagonal
     double position_covariance_;
     double orientation_covariance_;
+
+    /// Localization mode
+    bool localization_mode_{true};
+    std::string map_file_path_{"/home/nicolas-lauzon/map_red.csv"};
+
+    /// Trajectory storage for TUM export
+    std::vector<Sophus::SE3d> trajectory_poses_;
+    std::vector<double> trajectory_timestamps_;
+
+    /// Helper function to load map from CSV
+    std::vector<Eigen::Vector3d> LoadMapFromCSV(const std::string &file_path);
 };
 
 }  // namespace kiss_icp_ros
