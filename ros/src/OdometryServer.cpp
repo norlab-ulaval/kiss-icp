@@ -104,16 +104,25 @@ OdometryServer::OdometryServer(const rclcpp::NodeOptions &options)
 
     // Register shutdown callback to export trajectory on SIGTERM
     auto context = rclcpp::contexts::get_global_default_context();
-    std::weak_ptr<OdometryServer> weak_this = std::static_pointer_cast<OdometryServer>(this->shared_from_this());
-    context->add_on_shutdown_callback(
-        [weak_this]() {
-            if (auto node = weak_this.lock()) {
-                RCLCPP_INFO(node->get_logger(), "Received shutdown signal, exporting trajectory...");
-                node->ExportTrajectory();
-                RCLCPP_INFO(node->get_logger(), "Trajectory export completed");
-            }
-        });
 
+    auto timer = this->create_wall_timer(
+        std::chrono::milliseconds(0),
+        [this]() {
+            auto context = rclcpp::contexts::get_global_default_context();
+            std::weak_ptr<OdometryServer> weak_this =
+                std::static_pointer_cast<OdometryServer>(this->shared_from_this());
+            context->add_on_shutdown_callback(
+                [weak_this]() {
+                    if (auto node = weak_this.lock()) {
+                        RCLCPP_INFO(node->get_logger(),
+                            "Received shutdown signal, exporting trajectory...");
+                        node->ExportTrajectory();
+                        RCLCPP_INFO(node->get_logger(), "Trajectory export completed");
+                    }
+                });
+        });
+    // Cancel the timer immediately after it fires once
+    timer->cancel();
     // Initialize publishers
     rclcpp::QoS qos((rclcpp::SystemDefaultsQoS().keep_last(1).durability_volatile()));
     odom_publisher_ = create_publisher<nav_msgs::msg::Odometry>("kiss/odometry", qos);
