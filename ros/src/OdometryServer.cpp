@@ -210,7 +210,12 @@ void OdometryServer::RegisterFrame(const sensor_msgs::msg::PointCloud2::ConstSha
     const auto timestamps = GetTimestamps(msg);
 
     // Register frame, main entry point to KISS-ICP pipeline
+    // Measure processing time
+    const auto start_time = std::chrono::high_resolution_clock::now();
     const auto &[frame, keypoints] = kiss_icp_->RegisterFrame(points, timestamps);
+    const auto end_time = std::chrono::high_resolution_clock::now();
+    const auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time).count();
+    RCLCPP_DEBUG(this->get_logger(), "\tProcess point cloud in: %.4f seconds", duration / 1e6);
 
     // Extract the last KISS-ICP pose, ego-centric to the LiDAR
     const Sophus::SE3d kiss_pose = kiss_icp_->pose();
